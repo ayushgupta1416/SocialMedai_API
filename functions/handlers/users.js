@@ -137,3 +137,21 @@ exports.uploadImage = (req, res) => {
     });
     busboy.end(req.rawBody);
 };
+exports.addUserDetails= (req,res)=>{
+    const userDetails={};
+    userDetails.bio=req.body.bio;
+    userDetails.location=req.body.location;
+
+    return db.doc(`/users/${req.user.handle}`).update(userDetails)
+    .then(()=>{
+        return res.status(201).json("userDetails uploaded successfully ")
+    })
+    .catch(err=>{
+        console.error(err);
+        return res.status(404).json(
+            {error:err.code}
+        );
+    });
+
+
+};
