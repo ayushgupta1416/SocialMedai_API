@@ -204,3 +204,27 @@ exports.getScream= (req, res) => {
         res.status(500).json({ error: err.code });
       });
   };
+  exports.deleteScream=(req,res)=>{
+    const document=db.doc(`/screams/${req.params.screamId}`);
+
+    document.get()
+    .then(doc=>{
+      if(!doc.exists){
+        return res.status(404).json("scream not found");
+      }
+      if(doc.data().userHandle!=req.user.handle){
+        return res.status(404).json({err:"unauthorised"});
+      }
+      else{
+        return document.delete();
+      }
+    })
+    .then(()=>{
+      return res.status(201).json("scream deleted succesfully");
+    })
+    .catch(err=>{
+      console.error(err);
+      return res.status(404).json("something went wrong");
+    });
+
+  };
