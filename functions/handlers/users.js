@@ -2,87 +2,94 @@ const { db, admin } = require('../utility/admin');
 const Config = require('../utility/config');
 const firebase = require('firebase');
 firebase.initializeApp(Config);
+const {validateSignupData,validateLoginData} = require('../utility/validators');
 
 exports.signup = (req, res) => {
-    const noImg = '9188.jpg';
-    let token, userId;
-    const newUser = {
-        email: req.body.email,
-        password: req.body.password,
-        confirmPassword: req.body.confirmPassword,
-        handle: req.body.handle
-    };
-    db.doc(`/users/${newUser.handle}`).get()
-        .then(doc => {
-            if (doc.exists) {
-                return res.status(400).json({ handle: 'user with this handle already exsist' });
-            }
-            else {
-                return firebase
-                    .auth()
-                    .createUserWithEmailAndPassword(newUser.email, newUser.password);
-            }
-        })
+  const newUser = {
+    email: req.body.email,
+    password: req.body.password,
+    confirmPassword: req.body.confirmPassword,
+    handle: req.body.handle
+  };
 
-        .then((data) => {
-            userId = data.user.uid;
-            return data.user.getIdToken();
-        })
-        .then(idToken => {
-            token = idToken;
-            const userCredentials = {
-                handle: newUser.handle,
-                email: newUser.email,
-                createdAt: new Date().toISOString(),
-                imageUrl: `https://firebasestorage.googleapis.com/v0/b/${
-                    Config.storageBucket
-                    }/o/${noImg}?alt=media`,
-                userId
-            };
-            return db.doc(`/users/${newUser.handle}`).set(userCredentials);
-        })
-        .then(() => {
-            return res.status(201).json({ token });
-        })
-        .catch((err) => {
-            console.error(err);
-            return res.status(500).json({
-                error: err.code
-            });
-        });
+  const { valid, errors } = validateSignupData(newUser);
 
+  if (!valid) return res.status(400).json(errors);
 
+  const noImg = '9188.jpg';
+
+  let token, userId;
+  db.doc(`/users/${newUser.handle}`)
+    .get()
+    .then((doc) => {
+      if (doc.exists) {
+        return res.status(400).json({ handle: 'this handle is already taken' });
+      } else {
+        return firebase
+          .auth()
+          .createUserWithEmailAndPassword(newUser.email, newUser.password);
+      }
+    })
+    .then((data) => {
+      userId = data.user.uid;
+      return data.user.getIdToken();
+    })
+    .then((idToken) => {
+      token = idToken;
+      const userCredentials = {
+        handle: newUser.handle,
+        email: newUser.email,
+        createdAt: new Date().toISOString(),
+        imageUrl: `https://firebasestorage.googleapis.com/v0/b/${
+          Config.storageBucket
+        }/o/${noImg}?alt=media`,
+        userId
+      };
+      return db.doc(`/users/${newUser.handle}`).set(userCredentials);
+    })
+    .then(() => {
+      return res.status(201).json({ token });
+    })
+    .catch((err) => {
+      console.error(err);
+      if (err.code === 'auth/email-already-in-use') {
+        return res.status(400).json({ email: 'Email is already is use' });
+      } else {
+        return res
+          .status(500)
+          .json({ general: err });
+      }
+    });
 };
-exports.login = (req, res) => {
-
-    let token, userId;
+  // Log user in
+  exports.login = (req, res) => {
     const user = {
-        email: req.body.email,
-        password: req.body.password
+      email: req.body.email,
+      password: req.body.password
     };
+  
+    const { valid, errors } = validateLoginData(user);
+  
+    if (!valid) return res.status(400).json(errors);
+  
     firebase
-        .auth().signInWithEmailAndPassword(user.email, user.password)
-
-        .then((data) => {
-            //userId = data.user.uid;
-            return data.user.getIdToken();
-        })
-
-        .then((token) => {
-            return res.status(201).json({ token });
-        })
-        .catch((err) => {
-            console.error(err);
-            if (err.code === 'auth/wrong-password') {
-                return res.status(203).json({ general: 'wrong credentials please try again' });
-            }
-            return res.status(500).json({
-                error: err.code
-            });
-        });
-
-
-};
+      .auth()
+      .signInWithEmailAndPassword(user.email, user.password)
+      .then((data) => {
+        return data.user.getIdToken();
+      })
+      .then((token) => {
+        return res.json({ token });
+      })
+      .catch((err) => {
+        console.error(err);
+        // auth/wrong-password
+        // auth/user-not-user
+        return res
+          .status(403)
+          .json({ general: 'Wrong credentials, please try again' });
+      });
+  };
 exports.uploadImage = (req, res) => {
     const BusBoy = require('busboy');
     const path = require('path');
@@ -155,7 +162,7 @@ exports.addUserDetails= (req,res)=>{
 
 
 };
-exports.getUserDetails=(req,res)=>{
+exports.getAuthUserDetails=(req,res)=>{
     let userData={};
     db.doc(`/users/${req.user.handle}`).get()
     .then(doc=>{
@@ -170,7 +177,27 @@ exports.getUserDetails=(req,res)=>{
         data.forEach(doc=>{
             userData.likes.push(doc.data());
         });
-        return res.json(userData);
+        return db
+        .collection('notifications')
+        .where('recipient', '==', req.user.handle)
+        .orderBy('createdAt', 'desc')
+        .limit(10)
+        .get();
+    })
+    .then((data) => {
+      userData.notifications = [];
+      data.forEach((doc) => {
+        userData.notifications.push({
+          recipient: doc.data().recipient,
+          sender: doc.data().sender,
+          createdAt: doc.data().createdAt,
+          screamId: doc.data().screamId,
+          type: doc.data().type,
+          read: doc.data().read,
+          notificationId: doc.id
+        });
+      });
+      return res.json(userData);
     })
     .catch(err=>{
 
@@ -178,3 +205,39 @@ exports.getUserDetails=(req,res)=>{
         return res.status(500).json({error:err.code});
     })
 };
+exports.getUserDetails = (req, res) => {
+    let userData = {};
+    db.doc(`/users/${req.params.handle}`)
+      .get()
+      .then((doc) => {
+        if (doc.exists) {
+          userData.user = doc.data();
+          return db
+            .collection('screams')
+            .where('userHandle', '==', req.params.handle)
+            .orderBy('createdAt', 'desc')
+            .get();
+        } else {
+          return res.status(404).json({ errror: 'User not found' });
+        }
+      })
+      .then((data) => {
+        userData.screams = [];
+        data.forEach((doc) => {
+          userData.screams.push({
+            body: doc.data().body,
+            createdAt: doc.data().createdAt,
+            userHandle: doc.data().userHandle,
+            userImage: doc.data().userImage,
+            likeCount: doc.data().likeCount,
+            commentCount: doc.data().commentCount,
+            screamId: doc.id
+          });
+        });
+        return res.json(userData);
+      })
+      .catch((err) => {
+        console.error(err);
+        return res.status(500).json({ error: err.code });
+      });
+  };
